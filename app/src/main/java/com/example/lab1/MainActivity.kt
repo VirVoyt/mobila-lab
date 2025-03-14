@@ -1,48 +1,76 @@
 package com.example.lab1
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
-import com.example.lab1.ui.theme.Lab1Theme
+import android.util.Log
+import androidx.appcompat.app.AppCompatActivity
 import android.widget.Button
+import android.graphics.Color
 import android.widget.TextView
 
-
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
 
-        setContentView(R.layout.activity_main) // Устанавливаем макет
-        // Получаем доступ к TextView и Button
-        val textView: TextView = findViewById(R.id.textView)
-        val button: Button = findViewById(R.id.button)
-        // Устанавливаем обработчик нажатия на кнопку
+        val textView = findViewById<TextView>(R.id.textView)
+        textView.setCustomText("Новый текст", Color.RED)
+
+
+        Log.d("MainActivity", "onCreate called")//логирование вызова
+
+        val user1 = User("Иван", "ivan@example.com")
+        val user2 = User(null, null)
+
+        printUserInfo(user1)  // Вывод: Имя: Иван, Email: ivan@example.com
+        printUserInfo(user2)
+
+        val button = findViewById<Button>(R.id.button)
         button.setOnClickListener {
-            textView.text = "Кнопка нажата!"
+            supportFragmentManager.beginTransaction()
+                .replace(R.id.fragment_container, DetailFragment())
+                .commit()
         }
-        val a = 10
-        val b = 4
-        val sum : Int = a + b
-        println(sum)
-        val person = Person("Иван", 30)
-        person.introduce()
+
+    }
+
+   private fun TextView.setCustomText(text: String, color: Int) {
+        this.text = text
+        this.setTextColor(color)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        Log.d("MainActivity", "onStart called")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        Log.d("MainActivity", "onResume called")
+    }
+
+    override fun onPause() {
+        super.onPause()
+        Log.d("MainActivity", "onPause called")
+    }
+
+    override fun onStop() {
+        super.onStop()
+        Log.d("MainActivity", "onStop called")
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Log.d("MainActivity", "onDestroy called")
     }
 }
 
+class User(val name: String?, val email: String?)
 
-class Person(val name: String, val age: Int) {
+fun printUserInfo(user: User?) {
+    // безопасный метод и elvis оператор
+    val userName = user?.name ?: "Unknown"
+    val userEmail = user?.email ?: "No email"
 
-    fun introduce() {
-        println("Меня зовут $name, мне $age лет.")
-    }
+    println("Имя: $userName, Email: $userEmail")
 }
-
