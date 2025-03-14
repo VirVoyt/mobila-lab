@@ -1,76 +1,99 @@
 package com.example.lab1
 
 import android.os.Bundle
-import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
-import android.widget.Button
-import android.graphics.Color
 import android.widget.TextView
+import android.view.ViewGroup
+import android.view.LayoutInflater
+import android.widget.Toast
+import androidx.recyclerview.widget.RecyclerView
+import androidx.recyclerview.widget.LinearLayoutManager
+import android.view.View
 
 class MainActivity : AppCompatActivity() {
+
+    // Объявляем adapter как поле класса
+    private lateinit var adapter: ItemAdapter
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        val textView = findViewById<TextView>(R.id.textView)
-        textView.setCustomText("Новый текст", Color.RED)
+        // Используем MutableList вместо List
+        val items = mutableListOf(
+            Item(1, "Item 1", "Description 1"),
+            Item(2, "Item 2", "Description 2"),
+            Item(3, "Item 3", "Description 3")
+        )
 
+        val recyclerView = findViewById<RecyclerView>(R.id.recyclerView)
+        recyclerView.layoutManager = LinearLayoutManager(this)
 
-        Log.d("MainActivity", "onCreate called")//логирование вызова
+        // Инициализируем adapter
+        adapter = ItemAdapter(
+            items,
+            onItemClick = { item ->
+                Toast.makeText(this, "Clicked: ${item.title}", Toast.LENGTH_SHORT).show()
+            },
+            onItemLongClick = { item ->
+                // Удаляем элемент из списка
+                val position = items.indexOf(item)
+                items.removeAt(position)
+                // Уведомляем адаптер об удалении элемента
+                adapter.notifyItemRemoved(position)
+                Toast.makeText(this, "Removed: ${item.title}", Toast.LENGTH_SHORT).show()
+            }
+        )
 
-        val user1 = User("Иван", "ivan@example.com")
-        val user2 = User(null, null)
-
-        printUserInfo(user1)  // Вывод: Имя: Иван, Email: ivan@example.com
-        printUserInfo(user2)
-
-        val button = findViewById<Button>(R.id.button)
-        button.setOnClickListener {
-            supportFragmentManager.beginTransaction()
-                .replace(R.id.fragment_container, DetailFragment())
-                .commit()
-        }
-
-    }
-
-   private fun TextView.setCustomText(text: String, color: Int) {
-        this.text = text
-        this.setTextColor(color)
-    }
-
-    override fun onStart() {
-        super.onStart()
-        Log.d("MainActivity", "onStart called")
-    }
-
-    override fun onResume() {
-        super.onResume()
-        Log.d("MainActivity", "onResume called")
-    }
-
-    override fun onPause() {
-        super.onPause()
-        Log.d("MainActivity", "onPause called")
-    }
-
-    override fun onStop() {
-        super.onStop()
-        Log.d("MainActivity", "onStop called")
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        Log.d("MainActivity", "onDestroy called")
+        recyclerView.adapter = adapter
     }
 }
 
-class User(val name: String?, val email: String?)
+data class Item(
+    val id: Int,
+    val title: String,
+    val description: String
+) {
+    override fun toString(): String {
+        return "Item: $title, Description: $description"
+    }
+}
 
-fun printUserInfo(user: User?) {
-    // безопасный метод и elvis оператор
-    val userName = user?.name ?: "Unknown"
-    val userEmail = user?.email ?: "No email"
+class ItemAdapter(
+    private val items: MutableList<Item>, // Используем MutableList
+    private val onItemClick: (Item) -> Unit,
+    private val onItemLongClick: (Item) -> Unit
+) : RecyclerView.Adapter<ItemAdapter.ItemViewHolder>() {
 
-    println("Имя: $userName, Email: $userEmail")
+    inner class ItemViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+        private val titleTextView: TextView = itemView.findViewById(R.id.titleTextView)
+        private val descriptionTextView: TextView = itemView.findViewById(R.id.descriptionTextView)
+
+        fun bind(item: Item) {
+            titleTextView.text = item.title
+            descriptionTextView.text = item.description
+
+            itemView.setOnClickListener {
+                onItemClick(item)
+            }
+
+            itemView.setOnLongClickListener {
+                onItemLongClick(item)
+                true
+            }
+        }
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ItemViewHolder {
+        val view = LayoutInflater.from(parent.context).inflate(R.layout.item_layout, parent, false)
+        return ItemViewHolder(view)
+    }
+
+    override fun onBindViewHolder(holder: ItemViewHolder, position: Int) {
+        holder.bind(items[position])
+    }
+
+    override fun getItemCount(): Int {
+        return items.size
+    }
 }
