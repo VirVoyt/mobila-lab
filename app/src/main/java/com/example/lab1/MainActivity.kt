@@ -9,91 +9,112 @@ import android.widget.Toast
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.LinearLayoutManager
 import android.view.View
+import retrofit2.Retrofit//для выполнения сетевых запросов
+import retrofit2.converter.gson.GsonConverterFactory//Конвертирует JSON-ответы от сервера в объекты Kotlin/Java и наоборот.
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout//Контейнер для реализации "pull-to-refresh"
+import kotlinx.coroutines.Dispatchers//Определяет потоки для корутин
+import kotlinx.coroutines.launch//Запускает корутину (асинхронную задачу)
+import kotlinx.coroutines.withContext//Переключает контекст корутины
+import retrofit2.http.GET//Аннотация для HTTP-запросов в Retrofit. Определяет тип запроса и эндпоинт.
+import androidx.lifecycle.lifecycleScope//Скоуп корутин, привязанный к жизненному циклу Activity/Fragment.
+import okhttp3.OkHttpClient//для управления сетевыми запросами
+import okhttp3.logging.HttpLoggingInterceptor//Логирует HTTP-запросы/ответы для отладки.
+import java.util.concurrent.TimeUnit//Задает единицы измерения времени для таймаутов.
 
 class MainActivity : AppCompatActivity() {
-
-    // Объявляем adapter как поле класса
-    private lateinit var adapter: ItemAdapter
+    private lateinit var recyclerView: RecyclerView
+    private lateinit var adapter: PostAdapter
+    private lateinit var swipeRefresh: SwipeRefreshLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Используем MutableList вместо List
-        val items = mutableListOf(
-            Item(1, "Item 1", "Description 1"),
-            Item(2, "Item 2", "Description 2"),
-            Item(3, "Item 3", "Description 3")
-        )
-
-        val recyclerView = findViewById<RecyclerView>(R.id.recyclerView)
+        recyclerView = findViewById(R.id.recyclerView)
+        swipeRefresh = findViewById(R.id.swipeRefresh)
+        adapter = PostAdapter(emptyList())
+        recyclerView.adapter = adapter
         recyclerView.layoutManager = LinearLayoutManager(this)
 
-        // Инициализируем adapter
-        adapter = ItemAdapter(
-            items,
-            onItemClick = { item ->
-                Toast.makeText(this, "Clicked: ${item.title}", Toast.LENGTH_SHORT).show()
-            },
-            onItemLongClick = { item ->
-                // Удаляем элемент из списка
-                val position = items.indexOf(item)
-                items.removeAt(position)
-                // Уведомляем адаптер об удалении элемента
-                adapter.notifyItemRemoved(position)
-                Toast.makeText(this, "Removed: ${item.title}", Toast.LENGTH_SHORT).show()
-            }
-        )
+        loadPosts()
 
-        recyclerView.adapter = adapter
-    }
-}
-
-data class Item(
-    val id: Int,
-    val title: String,
-    val description: String
-) {
-    override fun toString(): String {
-        return "Item: $title, Description: $description"
-    }
-}
-
-class ItemAdapter(
-    private val items: MutableList<Item>, // Используем MutableList
-    private val onItemClick: (Item) -> Unit,
-    private val onItemLongClick: (Item) -> Unit
-) : RecyclerView.Adapter<ItemAdapter.ItemViewHolder>() {
-
-    inner class ItemViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
-        private val titleTextView: TextView = itemView.findViewById(R.id.titleTextView)
-        private val descriptionTextView: TextView = itemView.findViewById(R.id.descriptionTextView)
-
-        fun bind(item: Item) {
-            titleTextView.text = item.title
-            descriptionTextView.text = item.description
-
-            itemView.setOnClickListener {
-                onItemClick(item)
-            }
-
-            itemView.setOnLongClickListener {
-                onItemLongClick(item)
-                true
-            }
+        swipeRefresh.setOnRefreshListener {
+            loadPosts()
         }
     }
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ItemViewHolder {
-        val view = LayoutInflater.from(parent.context).inflate(R.layout.item_layout, parent, false)
-        return ItemViewHolder(view)
+    private fun loadPosts() {
+        swipeRefresh.isRefreshing = true
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val posts = RetrofitClient.apiService.getPosts()
+                withContext(Dispatchers.Main) {
+                    adapter.updateData(posts)
+                    swipeRefresh.isRefreshing = false
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@MainActivity, "Ошибка: ${e.message}", Toast.LENGTH_SHORT).show()
+                    swipeRefresh.isRefreshing = false
+                }
+            }
+        }
+    }
+}
+
+data class Post(
+    val id: Int,
+    val title: String,
+    val body: String
+)
+
+interface ApiService {
+    @GET("/posts/1/comments")
+    suspend fun getPosts(): List<Post>
+}
+
+object RetrofitClient {
+    private const val BASE_URL = "https://jsonplaceholder.typicode.com"
+
+    private val okHttpClient = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .addInterceptor(HttpLoggingInterceptor().apply {
+            level = HttpLoggingInterceptor.Level.BODY
+        })
+        .build()
+
+    val apiService: ApiService by lazy {
+        Retrofit.Builder()
+            .baseUrl(BASE_URL)
+            .addConverterFactory(GsonConverterFactory.create())
+            .client(okHttpClient)
+            .build()
+            .create(ApiService::class.java)
+    }
+}
+
+class PostAdapter(private var posts: List<Post>) : RecyclerView.Adapter<PostAdapter.PostViewHolder>() {
+
+    class PostViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+        val title: TextView = itemView.findViewById(R.id.title)
+        val body: TextView = itemView.findViewById(R.id.body)
     }
 
-    override fun onBindViewHolder(holder: ItemViewHolder, position: Int) {
-        holder.bind(items[position])
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): PostViewHolder {
+        val view = LayoutInflater.from(parent.context).inflate(R.layout.item_post, parent, false)
+        return PostViewHolder(view)
     }
 
-    override fun getItemCount(): Int {
-        return items.size
+    override fun onBindViewHolder(holder: PostViewHolder, position: Int) {
+        holder.title.text = posts[position].title
+        holder.body.text = posts[position].body
+    }
+
+    override fun getItemCount() = posts.size
+
+    fun updateData(newPosts: List<Post>) {
+        posts = newPosts
+        notifyDataSetChanged()
     }
 }
