@@ -5,150 +5,284 @@ import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
 import android.os.Bundle
-import android.widget.Button
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.NotificationCompat
-import androidx.work.*
-import kotlinx.coroutines.delay
-import java.util.concurrent.TimeUnit
-import android.Manifest
-import android.app.AlertDialog
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.content.ContextCompat
-import android.content.pm.PackageManager
+import androidx.lifecycle.ViewModelProvider
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+
+import kotlinx.coroutines.flow.Flow
+import androidx.recyclerview.widget.DividerItemDecoration
+import androidx.room.OnConflictStrategy
+import retrofit2.http.GET
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.LiveData
+import androidx.lifecycle.MutableLiveData
+import androidx.lifecycle.asLiveData
+import androidx.lifecycle.viewModelScope
+import android.widget.ImageView
+import com.bumptech.glide.Glide
+import com.example.lab1.databinding.ActivityMainBinding
+import kotlinx.coroutines.launch
+import java.lang.Exception
+import android.view.View
+import android.view.ViewGroup
+import android.widget.TextView
+import android.view.LayoutInflater
+import androidx.room.Dao
+import androidx.room.Database
+import androidx.room.Entity
+import androidx.room.Insert
+import androidx.room.PrimaryKey
+import androidx.room.Query
+import androidx.room.Room
+import androidx.room.RoomDatabase
 
 class MainActivity : AppCompatActivity() {
-    private val CHANNEL_ID = "work_manager_channel"
+    private lateinit var viewModel: NewsViewModel
+    private lateinit var adapter: NewsAdapter
+    private lateinit var binding: ActivityMainBinding
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(binding.root)
 
-        checkAndRequestNotificationPermission()
+        setupViewModel()
+        setupRecyclerView()
+        setupSwipeRefresh()
+        observeData()
 
-        createNotificationChannel()
-
-        val button = findViewById<Button>(R.id.startWorkButton)
-        button.setOnClickListener {
-            startBackgroundWork()
-        }
+        // Загружаем данные при создании активности
+        viewModel.refreshArticles()
     }
-    private fun checkAndRequestNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            when {
-                ContextCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.POST_NOTIFICATIONS
-                ) == PackageManager.PERMISSION_GRANTED -> {
-                    // Разрешение уже есть
-                }
-                shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS) -> {
-                    // Показать объяснение пользователю
-                    showPermissionExplanationDialog()
-                }
-                else -> {
-                    // Запросить разрешение
-                    requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                }
-            }
+
+    private fun setupViewModel() {
+        viewModel = ViewModelProvider(this)[NewsViewModel::class.java]
+    }
+
+    private fun setupRecyclerView() {
+        adapter = NewsAdapter()
+        binding.recyclerView.apply {
+            layoutManager = LinearLayoutManager(this@MainActivity)
+            adapter = this@MainActivity.adapter
+            addItemDecoration(DividerItemDecoration(this@MainActivity, DividerItemDecoration.VERTICAL))
         }
     }
 
-    private val requestPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            Toast.makeText(this, "Notification permission granted", Toast.LENGTH_SHORT).show()
-        } else {
-            Toast.makeText(this, "Notification permission denied", Toast.LENGTH_SHORT).show()
+    private fun setupSwipeRefresh() {
+        binding.swipeRefreshLayout.setOnRefreshListener {
+            viewModel.refreshArticles()
         }
     }
 
-    private fun showPermissionExplanationDialog() {
-        AlertDialog.Builder(this)
-            .setTitle("Notification Permission Needed")
-            .setMessage("This app needs notification permission to alert you about important updates")
-            .setPositiveButton("OK") { _, _ ->
-                requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
-            .setNegativeButton("Cancel", null)
-            .create()
-            .show()
-    }
-
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val name = "WorkManager Notifications"
-            val descriptionText = "Notifications for background work"
-            val importance = NotificationManager.IMPORTANCE_DEFAULT
-            val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
-                description = descriptionText
-            }
-
-            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            notificationManager.createNotificationChannel(channel)
+    private fun observeData() {
+        viewModel.articles.observe(this) { articles ->
+            adapter.submitList(articles)
         }
-    }
 
-    private fun startBackgroundWork() {
-        val data = Data.Builder()
-            .putString("message", "Пример сообщения")
-            .build()
+        viewModel.isLoading.observe(this) { isLoading ->
+            binding.swipeRefreshLayout.isRefreshing = isLoading ?: false
+        }
 
-        val workRequest = OneTimeWorkRequestBuilder<NotificationWorker>()
-            .setInputData(data)
-            .setInitialDelay(5, TimeUnit.SECONDS)
-            .build()
-
-        WorkManager.getInstance(this).enqueue(workRequest)
-
-        // Observe work status
-        WorkManager.getInstance(this)
-            .getWorkInfoByIdLiveData(workRequest.id)
-            .observe(this) { workInfo ->
-                when (workInfo?.state) {
-                    WorkInfo.State.SUCCEEDED ->
-                        Toast.makeText(this, "Задача успешно выполнена", Toast.LENGTH_SHORT).show()
-                    WorkInfo.State.FAILED ->
-                        Toast.makeText(this, "Ошибка выполнения задачи", Toast.LENGTH_SHORT).show()
-                    else -> {}
-                }
+        viewModel.errorMessage.observe(this) { error ->
+            error?.let {
+                Toast.makeText(this, it, Toast.LENGTH_SHORT).show()
             }
-
-        Toast.makeText(this, "Фоновая задача запущена", Toast.LENGTH_SHORT).show()
+        }
     }
 }
 
-class NotificationWorker(
-    context: Context,
-    workerParams: WorkerParameters
-) : CoroutineWorker(context, workerParams) {
+@Entity(tableName = "articles")
+data class Article(
+    @PrimaryKey val url: String,
+    val source: String,
+    val author: String?,
+    val title: String,
+    val description: String?,
+    val urlToImage: String?,
+    val publishedAt: String,
+    val content: String?
+)
 
-    override suspend fun doWork(): Result {
-        return try {
-            delay(5000) // Ждем 5 секунд
+data class NewsResponse(
+    val status: String,
+    val totalResults: Int,
+    val articles: List<Article>
+)
 
-            sendNotification()
+@Dao
+interface ArticleDao {
+    @Query("SELECT * FROM articles ORDER BY publishedAt DESC")
+    fun getAllArticles(): Flow<List<Article>>
 
-            Result.success()
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertArticles(articles: List<Article>)
+
+    @Query("DELETE FROM articles")
+    suspend fun deleteAllArticles()
+}
+
+@Database(entities = [Article::class], version = 1, exportSchema = false)
+abstract class AppDatabase : RoomDatabase() {
+    abstract fun articleDao(): ArticleDao
+
+    companion object {
+        @Volatile private var instance: AppDatabase? = null
+
+        fun getDatabase(context: Context): AppDatabase =
+            instance ?: synchronized(this) {
+                instance ?: buildDatabase(context).also { instance = it }
+            }
+
+        private fun buildDatabase(context: Context) =
+            Room.databaseBuilder(
+                context.applicationContext,
+                AppDatabase::class.java,
+                "news_database"
+            ).fallbackToDestructiveMigration()
+                .build()
+    }
+}
+
+interface NewsApiService {
+    @GET("v2/top-headlines?country=us&category=business&apiKey=fe2ea13c53374c828bfc007fcb53b61a")
+    suspend fun getTopHeadlines(): NewsResponse  // Без параметров
+
+    companion object {
+        fun create(): NewsApiService {  // Без параметра apiKey
+            return Retrofit.Builder()
+                .baseUrl("https://newsapi.org/v2")
+                .addConverterFactory(GsonConverterFactory.create())
+                .build()
+                .create(NewsApiService::class.java)
+        }
+    }
+}
+
+class NewsRepository(
+    private val articleDao: ArticleDao,
+    private val context: Context
+
+) {
+
+    private val newsApiService = NewsApiService.create()
+    val articles: Flow<List<Article>> = articleDao.getAllArticles()
+
+    suspend fun refreshArticles() {
+        try {
+            val response = newsApiService.getTopHeadlines()
+            articleDao.deleteAllArticles()
+            articleDao.insertArticles(response.articles)
+
+            if (response.articles.isNotEmpty()) {
+                sendNotification(context, response.articles.size)
+            }
         } catch (e: Exception) {
-            Result.failure()
+            throw Exception("Failed to refresh articles: ${e.message}")
         }
     }
 
-    private fun sendNotification() {
-        val notificationId = 1
-        val notification = NotificationCompat.Builder(applicationContext, "work_manager_channel")
-            .setSmallIcon(android.R.drawable.ic_dialog_info) // Changed to system icon
-            .setContentTitle("Фоновая задача")
-            .setContentText("Задача успешно выполнена за 5 секунд!")
+    private fun sendNotification(context: Context, newArticlesCount: Int) {
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE)
+                as NotificationManager
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                "news_channel",
+                "News Updates",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = "New articles notifications"
+            }
+            notificationManager.createNotificationChannel(channel)
+        }
+
+        val notification = NotificationCompat.Builder(context, "news_channel")
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("New Articles Available")
+            .setContentText("$newArticlesCount new articles loaded")
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
 
-        val notificationManager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE)
-                as NotificationManager
-        notificationManager.notify(notificationId, notification)
+        notificationManager.notify(1, notification)
+    }
+}
+
+class NewsViewModel(application: Application) : AndroidViewModel(application) {
+    private val repository: NewsRepository
+    val articles: LiveData<List<Article>>
+    val isLoading = MutableLiveData<Boolean>()
+    val errorMessage = MutableLiveData<String?>()
+
+    init {
+        val articleDao = AppDatabase.getDatabase(application).articleDao()
+        repository = NewsRepository(
+            articleDao,
+            application.applicationContext
+        )
+        articles = repository.articles.asLiveData()
     }
 
+    fun refreshArticles() {
+        viewModelScope.launch {
+            isLoading.postValue(true)
+            try {
+                repository.refreshArticles()
+                errorMessage.postValue(null)
+            } catch (e: Exception) {
+                errorMessage.postValue(e.message ?: "Unknown error")
+            } finally {
+                isLoading.postValue(false)
+            }
+        }
+    }
+}
+
+class NewsAdapter : RecyclerView.Adapter<NewsAdapter.NewsViewHolder>() {
+    private var articles = emptyList<Article>()
+
+    inner class NewsViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+        private val titleTextView: TextView = itemView.findViewById(R.id.titleTextView)
+        private val descriptionTextView: TextView = itemView.findViewById(R.id.descriptionTextView)
+        private val imageView: ImageView = itemView.findViewById(R.id.imageView)
+        private val sourceTextView: TextView = itemView.findViewById(R.id.sourceTextView)
+
+        fun bind(article: Article) {
+            titleTextView.text = article.title
+            descriptionTextView.text = article.description ?: "No description available"
+            sourceTextView.text = article.source
+
+            article.urlToImage?.let { url ->
+                Glide.with(itemView)
+                    .load(url)
+                    .placeholder(android.R.drawable.ic_menu_gallery)
+                    .error(android.R.drawable.ic_menu_report_image)
+                    .into(imageView)
+            } ?: run {
+                imageView.setImageResource(android.R.drawable.ic_menu_gallery)
+            }
+        }
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): NewsViewHolder {
+        val view = LayoutInflater.from(parent.context)
+            .inflate(R.layout.item_article, parent, false)
+        return NewsViewHolder(view)
+    }
+
+    override fun onBindViewHolder(holder: NewsViewHolder, position: Int) {
+        holder.bind(articles[position])
+    }
+
+    override fun getItemCount() = articles.size
+
+    fun submitList(newArticles: List<Article>) {
+        articles = newArticles
+        notifyDataSetChanged()
+    }
 }
