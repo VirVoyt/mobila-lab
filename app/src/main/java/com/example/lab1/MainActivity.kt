@@ -1,258 +1,154 @@
 package com.example.lab1
 
-import android.app.AlertDialog
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
+import android.os.Build
 import android.os.Bundle
-import android.view.LayoutInflater
-import android.view.View
-import android.view.ViewGroup
-import android.widget.CheckBox
-import android.widget.EditText
-import android.widget.TextView
+import android.widget.Button
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.lifecycle.lifecycleScope
-import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
-import androidx.room.Dao
-import androidx.room.Database
-import androidx.room.Delete
-import androidx.room.Entity
-import androidx.room.Insert
-import androidx.room.PrimaryKey
-import androidx.room.Query
-import androidx.room.Room
-import androidx.room.RoomDatabase
-import androidx.room.Update
-import com.google.android.material.floatingactionbutton.FloatingActionButton
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.launch
-import androidx.recyclerview.widget.DividerItemDecoration
-import android.util.SparseBooleanArray
-import androidx.annotation.NonNull
-import androidx.recyclerview.widget.DiffUtil
-import androidx.room.ColumnInfo
-import androidx.room.Ignore
-import android.graphics.Paint
-import androidx.recyclerview.widget.DefaultItemAnimator;
+import androidx.core.app.NotificationCompat
+import androidx.work.*
+import kotlinx.coroutines.delay
+import java.util.concurrent.TimeUnit
+import android.Manifest
+import android.app.AlertDialog
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import android.content.pm.PackageManager
+
 class MainActivity : AppCompatActivity() {
-    private lateinit var adapter: TaskAdapter
-    private lateinit var taskDao: TaskDao
-    private lateinit var recyclerView: RecyclerView
-    private lateinit var fabAddTask: FloatingActionButton
+    private val CHANNEL_ID = "work_manager_channel"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        recyclerView = findViewById(R.id.recyclerView)
-        fabAddTask = findViewById(R.id.fabAddTask)
+        checkAndRequestNotificationPermission()
 
-        // Инициализация базы данных
-        val db = AppDatabase.getDatabase(this)
-        taskDao = db.taskDao()
+        createNotificationChannel()
 
-        setupRecyclerView()
-        setupAddButton()
-        observeTasks()
-        recyclerView.itemAnimator = DefaultItemAnimator()
+        val button = findViewById<Button>(R.id.startWorkButton)
+        button.setOnClickListener {
+            startBackgroundWork()
+        }
     }
-
-    private fun setupRecyclerView() {
-        adapter = TaskAdapter(
-            onTaskClick = { task ->
-                lifecycleScope.launch {
-                    // Обновляем задачу в базе данных
-                    taskDao.updateTask(task)
-                    // Обновляем список, чтобы применить сортировку
-                    taskDao.getAllTasks().collect { updatedTasks ->
-                        adapter.submitList(updatedTasks)
-                    }
+    private fun checkAndRequestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            when {
+                ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) == PackageManager.PERMISSION_GRANTED -> {
+                    // Разрешение уже есть
                 }
-            },
-            onTaskLongClick = { task ->
-                showDeleteDialog(task)
+                shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS) -> {
+                    // Показать объяснение пользователю
+                    showPermissionExplanationDialog()
+                }
+                else -> {
+                    // Запросить разрешение
+                    requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
             }
-        )
-
-        recyclerView.apply {
-            layoutManager = LinearLayoutManager(this@MainActivity)
-            adapter = this@MainActivity.adapter
-            itemAnimator = DefaultItemAnimator().apply {
-                changeDuration = 120
-                moveDuration = 120
-            }
-            addItemDecoration(DividerItemDecoration(this@MainActivity, DividerItemDecoration.VERTICAL))
         }
     }
 
-    private fun setupAddButton() {
-        fabAddTask.setOnClickListener {
-            showAddTaskDialog()
+    private val requestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            Toast.makeText(this, "Notification permission granted", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(this, "Notification permission denied", Toast.LENGTH_SHORT).show()
         }
     }
 
-    private fun showAddTaskDialog() {
-        val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_add_task, null)
-        val titleInput = dialogView.findViewById<EditText>(R.id.etTaskTitle)
-        val descInput = dialogView.findViewById<EditText>(R.id.etTaskDescription)
-
+    private fun showPermissionExplanationDialog() {
         AlertDialog.Builder(this)
-            .setTitle("Добавить задачу")
-            .setView(dialogView)
-            .setPositiveButton("Добавить") { _, _ ->
-                val title = titleInput.text.toString()
-                val description = descInput.text.toString()
-
-                if (title.isNotBlank()) {
-                    lifecycleScope.launch {
-                        taskDao.insertTask(Task(title = title, description = description))
-                    }
-                }
+            .setTitle("Notification Permission Needed")
+            .setMessage("This app needs notification permission to alert you about important updates")
+            .setPositiveButton("OK") { _, _ ->
+                requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
-            .setNegativeButton("Отмена", null)
+            .setNegativeButton("Cancel", null)
+            .create()
             .show()
     }
 
-    private fun showDeleteDialog(task: Task) {
-        AlertDialog.Builder(this)
-            .setTitle("Удалить задачу?")
-            .setMessage("Вы уверены, что хотите удалить '${task.title}'?")
-            .setPositiveButton("Удалить") { _, _ ->
-                lifecycleScope.launch {
-                    taskDao.deleteTask(task)
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val name = "WorkManager Notifications"
+            val descriptionText = "Notifications for background work"
+            val importance = NotificationManager.IMPORTANCE_DEFAULT
+            val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
+                description = descriptionText
+            }
+
+            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun startBackgroundWork() {
+        val data = Data.Builder()
+            .putString("message", "Пример сообщения")
+            .build()
+
+        val workRequest = OneTimeWorkRequestBuilder<NotificationWorker>()
+            .setInputData(data)
+            .setInitialDelay(5, TimeUnit.SECONDS)
+            .build()
+
+        WorkManager.getInstance(this).enqueue(workRequest)
+
+        // Observe work status
+        WorkManager.getInstance(this)
+            .getWorkInfoByIdLiveData(workRequest.id)
+            .observe(this) { workInfo ->
+                when (workInfo?.state) {
+                    WorkInfo.State.SUCCEEDED ->
+                        Toast.makeText(this, "Задача успешно выполнена", Toast.LENGTH_SHORT).show()
+                    WorkInfo.State.FAILED ->
+                        Toast.makeText(this, "Ошибка выполнения задачи", Toast.LENGTH_SHORT).show()
+                    else -> {}
                 }
             }
-            .setNegativeButton("Отмена", null)
-            .show()
-    }
 
-    private fun observeTasks() {
-        lifecycleScope.launch {
-            taskDao.getAllTasks().collect { tasks ->
-                adapter.submitList(tasks)
-            }
-        }
-    }
-
-}
-
-@Entity(tableName = "tasks")
-data class Task(
-    @PrimaryKey(autoGenerate = true) val id: Int = 0,
-    val title: String,
-    val description: String,
-
-    var isCompleted: Boolean = false
-)
-
-@Dao
-interface TaskDao {
-    @Query("SELECT * FROM tasks ORDER BY isCompleted ASC, id DESC")
-    fun getAllTasks(): Flow<List<Task>>
-
-    @Insert
-    suspend fun insertTask(task: Task)
-
-    @Update
-    suspend fun updateTask(task: Task)
-
-    @Delete
-    suspend fun deleteTask(task: Task)
-}
-
-@Database(entities = [Task::class], version = 1)
-abstract class AppDatabase : RoomDatabase() {
-    abstract fun taskDao(): TaskDao
-
-    companion object {
-        @Volatile
-        private var INSTANCE: AppDatabase? = null
-
-        fun getDatabase(context: Context): AppDatabase {
-            return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
-                    context.applicationContext,
-                    AppDatabase::class.java,
-                    "task_database"
-                ).build()
-                INSTANCE = instance
-                instance
-            }
-        }
+        Toast.makeText(this, "Фоновая задача запущена", Toast.LENGTH_SHORT).show()
     }
 }
 
-class TaskAdapter(
-    private val onTaskClick: (Task) -> Unit,
-    private val onTaskLongClick: (Task) -> Unit
-) : RecyclerView.Adapter<TaskAdapter.TaskViewHolder>() {
+class NotificationWorker(
+    context: Context,
+    workerParams: WorkerParameters
+) : CoroutineWorker(context, workerParams) {
 
-    private var tasks = emptyList<Task>()
+    override suspend fun doWork(): Result {
+        return try {
+            delay(5000) // Ждем 5 секунд
 
-    inner class TaskViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
-        private val titleTextView: TextView = itemView.findViewById(R.id.titleTextView)
-        private val descriptionTextView: TextView = itemView.findViewById(R.id.descriptionTextView)
-        private val completedCheckBox: CheckBox = itemView.findViewById(R.id.completedCheckBox)
-        private var currentTask: Task? = null
+            sendNotification()
 
-        init {
-            // Один раз устанавливаем слушатель в init
-            completedCheckBox.setOnCheckedChangeListener { _, isChecked ->
-                currentTask?.let { task ->
-                    if (task.isCompleted != isChecked) {  // Проверяем реальное изменение
-                        task.isCompleted = isChecked
-
-                        onTaskClick(task)
-                    }
-                }
-            }
-            itemView.setOnLongClickListener {
-                currentTask?.let {
-                    onTaskLongClick(it)
-                    true  // Возвращаем true, чтобы показать, что событие обработано
-                } ?: false
-            }
+            Result.success()
+        } catch (e: Exception) {
+            Result.failure()
         }
-
-        fun bind(task: Task) {
-            currentTask = task
-
-            // Временно отключаем слушатель для обновления состояния
-            completedCheckBox.jumpDrawablesToCurrentState()
-            completedCheckBox.isChecked = task.isCompleted
-
-            titleTextView.text = task.title
-            descriptionTextView.text = task.description
-        }
-
-
     }
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): TaskViewHolder {
-        val view = LayoutInflater.from(parent.context)
-            .inflate(R.layout.item_task, parent, false)
-        return TaskViewHolder(view)
+    private fun sendNotification() {
+        val notificationId = 1
+        val notification = NotificationCompat.Builder(applicationContext, "work_manager_channel")
+            .setSmallIcon(android.R.drawable.ic_dialog_info) // Changed to system icon
+            .setContentTitle("Фоновая задача")
+            .setContentText("Задача успешно выполнена за 5 секунд!")
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
+
+        val notificationManager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE)
+                as NotificationManager
+        notificationManager.notify(notificationId, notification)
     }
 
-    override fun onBindViewHolder(holder: TaskViewHolder, position: Int) {
-        holder.bind(tasks[position])
-    }
-
-    override fun getItemCount() = tasks.size
-
-    fun submitList(newTasks: List<Task>) {
-        val diffCallback = object : DiffUtil.Callback() {
-            override fun getOldListSize() = tasks.size
-            override fun getNewListSize() = newTasks.size
-            override fun areItemsTheSame(oldPos: Int, newPos: Int) =
-                tasks[oldPos].id == newTasks[newPos].id
-            override fun areContentsTheSame(oldPos: Int, newPos: Int) =
-                tasks[oldPos] == newTasks[newPos]
-        }
-
-        val diffResult = DiffUtil.calculateDiff(diffCallback)
-        tasks = newTasks
-        diffResult.dispatchUpdatesTo(this)
-    }
 }
-
