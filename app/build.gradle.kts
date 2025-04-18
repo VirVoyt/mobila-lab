@@ -15,7 +15,6 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
-        buildConfigField ("String", "NEWS_API_KEY", "\"fe2ea13c53374c828bfc007fcb53b61a\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -88,4 +87,14 @@ dependencies {
     implementation ("androidx.recyclerview:recyclerview:1.3.2")
     implementation ("com.github.bumptech.glide:glide:4.16.0")
     implementation ("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
+    // Flexbox
+    implementation ("com.google.android.flexbox:flexbox:3.0.0")
+
+    // Material Components (для Chip)
+    implementation ("com.google.android.material:material:1.6.0")
+
+    // Glide
+    implementation ("com.github.bumptech.glide:glide:4.13.2")
+    annotationProcessor ("com.github.bumptech.glide:compiler:4.13.2")
+    implementation ("com.google.code.gson:gson:2.10.1")
 }
